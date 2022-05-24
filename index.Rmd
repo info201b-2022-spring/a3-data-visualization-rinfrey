@@ -1,0 +1,237 @@
+---
+title: "A3"
+author: "rin"
+date: '2022-05-22'
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(tidyverse)
+library(stringr)
+library(ggplot2)
+library(fmsb)
+library(maps)
+library(ggmap)
+library(knitr)
+
+
+incarcerationdf <- read.csv(file = url("https://raw.githubusercontent.com/vera-institute/incarceration-trends/master/incarceration_trends.csv"))
+
+
+
+blackmalejail_pop <- select(incarcerationdf, year, state, county_name, black_pop_15to64, total_pop_15to64)
+past10jailpop <- filter(blackmalejail_pop, year >= "2010")
+past10jailpop <- past10jailpop %>%
+  mutate(black_popercent = black_pop_15to64/total_pop_15to64 * 100) 
+
+
+latino_pop <- select(incarcerationdf, year, state, county_name, latinx_pop_15to64, white_pop_15to64, total_pop_15to64)
+latinopast_10 <- filter(latino_pop, year >= "2010")
+latinopast_10 <- latinopast_10 %>%
+  mutate(latino_poppercent = latinx_pop_15to64/total_pop_15to64 * 100)
+
+white_pop <- latino_pop
+white_pop <- filter(white_pop, year >= "2010")
+white_pop <- white_pop %>%
+  mutate(white_poppercent = white_pop_15to64/total_pop_15to64 * 100)
+
+    
+black_latino_poppercent <- data.frame(latinopast_10$year, latinopast_10$state, 
+                                      latinopast_10$county_name, latinopast_10$latino_poppercent, 
+                                      past10jailpop$black_popercent, past10jailpop$total_pop_15to64, 
+                                      white_pop$white_poppercent)
+                                  
+
+black_latino_poppercent = rename(black_latino_poppercent, year = latinopast_10.year, 
+                                 county_name = latinopast_10.county_name, 
+                                 state = latinopast_10.state, 
+                                 latino_pop_percent = latinopast_10.latino_poppercent, 
+                                 black_pop_percent = past10jailpop.black_popercent, 
+                                 total_jail_pop = past10jailpop.total_pop_15to64, 
+                                 white_pop_percent = white_pop.white_poppercent)
+
+black_latino_poppercent <- black_latino_poppercent %>%
+  group_by(year) %>%
+  slice_max(total_jail_pop, n = 1) 
+
+chart_1 <- black_latino_poppercent %>%
+  select(year, latino_pop_percent, black_pop_percent, white_pop_percent) %>%
+  gather(key = population_percentages_in_LA_county , value = total_jail_population, - year)
+
+chart_1 <- ggplot(chart_1) + 
+  geom_col(mapping = aes(x = year, y = total_jail_population, fill = population_percentages_in_LA_county), position =  position_dodge(1), width = 1) +
+  scale_fill_brewer(palette = "Accent")
+
+
+
+#####
+
+female_prison_adm_percent <- select(incarcerationdf, state, year, black_female_prison_adm, total_prison_adm)
+
+female_prison_adm_percent <- female_prison_adm_percent %>%
+  group_by(state) %>%
+ mutate(female_pop_percent = black_female_prison_adm/ total_prison_adm * 100)
+female_prison_adm_percent <- na.exclude(female_prison_adm_percent)
+female_prison_adm_percent <- female_prison_adm_percent %>%
+  group_by(state)%>%
+  summarise(female_avg = mean(female_pop_percent))
+
+male_prison_adm_percent <- select(incarcerationdf, year, state, black_male_prison_adm, total_prison_adm )
+
+male_prison_adm_percent <- male_prison_adm_percent %>%
+  group_by(state) %>%
+  mutate(male_pop_percent = black_male_prison_adm/total_prison_adm * 100 )
+male_prison_adm_percent <- na.exclude(male_prison_adm_percent)
+male_prison_adm_percent <- male_prison_adm_percent %>%
+  group_by(state) %>%
+  summarise(male_avg = mean(male_pop_percent))
+
+male_female_avg_prison_admits <- merge(female_prison_adm_percent, male_prison_adm_percent)
+male_female_avg_prison_admits <- male_female_avg_prison_admits %>%
+  arrange(desc(male_avg))
+male_female_avg_prison_admits <- male_female_avg_prison_admits %>%
+  slice_max(male_avg, n = 10)
+
+
+
+chart_2 <- male_female_avg_prison_admits %>%
+  select(state, female_avg, male_avg) %>%
+  gather(Black_prison_admit_pop_by_gender, value = avg, - state)
+
+chart_2 <- ggplot(chart_2) +
+  geom_col(mapping = aes(x = state, y = avg, fill = Black_prison_admit_pop_by_gender), position = position_dodge(0.7), width = 1) +
+  scale_fill_brewer(palette = "Accent")
+
+####
+
+black_prison_pop <- select(incarcerationdf, state, year, total_prison_pop, black_prison_pop)
+black_prison_pop <- filter(black_prison_pop, year == "2016")
+black_prison_pop <- na.exclude(black_prison_pop)
+black_prison_pop <- black_prison_pop %>%
+  mutate(black_prison_percent = black_prison_pop/total_prison_pop * 100)
+black_prison_pop <- black_prison_pop %>%
+  group_by(state) %>%
+  summarise(black_prison_percentage = sum(black_prison_percent))
+
+black_prison_pop <- black_prison_pop %>%
+  mutate(State = state.name[match(state, state.abb)]) %>%
+  mutate(state = tolower(State))
+
+
+state_shape <- map_data("state") %>%
+  rename(state = region) %>%
+  full_join(black_prison_pop, by = "state")
+
+chart_3 <- ggplot(state_shape) +
+  geom_polygon(mapping = aes(x = long, y = lat, group = group, fill = black_prison_percentage),
+    color = "white",
+    size = .1) + 
+  coord_map() + 
+labs(fill = " Black population in prison") +
+theme_bw()+
+  theme(axis.line = element_blank(),        
+        axis.text = element_blank(),       
+        axis.ticks = element_blank(),       
+        plot.background = element_blank(),  
+        panel.grid.major = element_blank(), 
+        panel.grid.minor = element_blank(), 
+        panel.border = element_blank()      
+) 
+
+percent_avg <- select(past10jailpop, year, state, county_name, black_popercent)
+percent_avg <- percent_avg %>%
+  group_by(state) %>%
+  mutate(change_over_time = black_popercent -lag(black_popercent))
+popchange_over_time <- percent_avg 
+  lapply(popchange_over_time, function(x) x[is.finite(x)])
+popchange_over_time <- popchange_over_time %>%
+  group_by(year, state) %>%
+slice_max(change_over_time, n = 1)
+
+table_pop_change <- popchange_over_time %>%
+  group_by(state) %>%
+  summarise(black_pop_change = mean(change_over_time))
+table_pop_change <- table_pop_change %>%
+  slice_max(black_pop_change, n = 5)
+
+
+
+```
+
+
+This report will explore certain trends and information gleaned from a data set that has compiled 
+documentation surrounding jail and prison demographics. (The data set used in this report is from the Vera Institute.)
+
+As a previous preschool teacher, I am well aware of the phenomenon known as the "pre-school to prison pipeline" and 
+the effects that living in a racist society has on individuals within it. Keeping this in mind I chose to focus my 
+analysis on Black communities and Latino communities specifically, as these communities have been historically and 
+continually harmed by both beliefs held by individuals and structures created within communities. 
+
+I evaluated a few different variables based on population percentages within jail and prison communities. I used the 
+questions below to guide my exploration. 
+
+- What area of the country has the largest jail population? And what have different marginalized demographic 
+population percentages looked like in this community overtime? (looking at Latino populations, Black populations and 
+then comparing them against white populations) 
+- In a wider lens of the United States as a whole, how has the Black population within jails changed? 
+- What percentage of prison admissions are Black females? and where is that the highest ?
+- What percentage of prison admissions are black males? And where is that the highest ? 
+- What percent of a prisons population is Black in the year 2018, per state? 
+
+I found out the area that had the largest jail population was LA County - and after looking at the demographics information, I found that there was a steady increase in the Latino population being represented in jail. However there was a decrease in both the black community and the white community within jail population. This change is demonstrated in chart one. 
+
+Looking at the United States as a whole, the change in population of black individuals within jails has been very dependent on what state. 
+below is a table of how that population has changed over the past 10 years, in the states that have had the highest amount of change.
+Some thing I have noticed in this data set and the ones following it, is that the states that have consistently had higher percentages of black individuals as their population, have been states in the south as well as states that have higher percentages of sundown towns within them. (see chart 3, for more information on sundown towns)
+
+
+```{r, echo=FALSE}
+knitr::kable(table_pop_change)
+
+```
+
+
+Now narrowing our view to the disparity between black men and black women represented in our populations, We are able to visualize in the second chart the large gap between black male populations and black female populations. I found this observation interesting, however leaning back on my education as a early childhood educator, there has been research exploring how black boys are historically more marginalized against in the school community versus black girls. Are there is no direct correlation to my anecdotal knowledge and this data however I do think it would be interesting to correlate the amount of in school suspensions to future jail populations. 
+
+
+Many individuals view Trumps election as a start to an increase in hate speech on social media platforms as well as social media visualization of police brutality against black individuals. I chose to use that election year of 2016 to base my chart tracking the percentage of black population in prisons. I acknowledge below as well that this chart does not have full data for each state - However I do think it is important to include because of the disparity between Western (and northeastern states) and southern states in terms of prison population percentages. As stated above, these states have the a large majority of sundown states compared to the rest of the US states. These states have also had a long history of emphasizing slavery is an important aspect of their constitutions. I do not think we can ignore the correlation of states who have emphasized keeping enslaved populations and increased prison populations of the same race. 
+
+
+
+
+#  Demographic population percentages vs total population, and their change over 8 years (2010-2018)
+
+```{r, trend, echo = FALSE}
+plot(chart_1)
+```
+
+
+Chart tracks changes in LA county jail, California
+
+
+
+
+# States with highest average level of Black male prison admit percentages compared to their average level of Black female prison admit percentages 
+
+```{r, echo = FALSE}
+plot(chart_2)
+
+```
+
+
+
+This Chart shows the top 10 states based on the percentage of their Black male population.
+
+# Black prison population comparison percents in 2016 
+```{r, echo = FALSE}
+plot(chart_3)
+```
+
+
+I would like to recognize that this chart does not show data from every single state. And realize that without this data it does not show a complete picture. However I would like to recognize that the states that do have data represented – the states that have a higher percentage of the black population in prison have historically been sundown states or states that have higher percentages of sundown towns. 
+
+For more information about sundown towns please visit (https://justice.tougaloo.edu/sundown-towns/using-the-sundown-towns-database/state-map/)
+
+
